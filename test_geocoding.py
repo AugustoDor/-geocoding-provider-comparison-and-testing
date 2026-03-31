@@ -248,6 +248,8 @@ def _here_autosuggest(query: str) -> tuple[list[Suggestion], float]:
         "at": "-34.6037,-58.3816",
         "limit": 5,
         "lang": "es",
+        # locality = ciudad, administrativeArea = estado/provincia, countryCode = país
+        "resultTypes": "locality,administrativeArea,countryCode",
         "apiKey": HERE_API_KEY,
     }
     start = time.time()

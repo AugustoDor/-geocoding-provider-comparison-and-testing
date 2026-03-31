@@ -88,6 +88,39 @@ For each query the script:
 
 ---
 
+## Result types
+
+By default the script is configured to return **only cities, states/provinces, and countries** — no streets, POIs, or postal codes. This is enforced via a `types` parameter on each provider.
+
+To change what types of places are returned, edit the relevant function in `test_geocoding.py`:
+
+### Mapbox — `_mapbox_suggest()`
+```python
+"types": "country,region,place",
+```
+Available values: `country`, `region` (state/province), `place` (city), `locality` (neighborhood), `address`, `poi`
+
+### Google — `_google_autocomplete()`
+```python
+"types": "(regions)",
+```
+Available values:
+- `(regions)` — countries, states, cities, postal codes
+- `(cities)` — cities only
+- `address` — street addresses
+- `establishment` — POIs (businesses, landmarks)
+- You can also pass a single type like `locality` or `country`
+
+### HERE — `_here_autosuggest()`
+```python
+"resultTypes": "locality,administrativeArea,countryCode",
+```
+Available values: `locality` (city), `administrativeArea` (state/province), `countryCode` (country), `street`, `houseNumber`, `postalCode`
+
+To search everything (no filter), simply remove the `types` / `resultTypes` parameter from the params dict.
+
+---
+
 ## Language flag
 
 The `language` parameter only affects the **response**, not the input.
