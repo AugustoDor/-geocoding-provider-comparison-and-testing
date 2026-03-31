@@ -46,13 +46,34 @@ cp .env.example .env
 
 ### Getting API keys
 
-| Provider | Where to sign up | Free tier |
-|----------|-----------------|-----------|
-| Mapbox   | https://account.mapbox.com/ | 100,000 requests/month |
-| HERE     | https://platform.here.com/portal/ | 30,000 requests/month |
-| Google   | https://console.cloud.google.com/ | $200 credit/month (~11,700 sessions) |
-
 You only need keys for the providers you want to test. The script skips any provider whose key is missing.
+
+#### Mapbox
+Free tier: 100,000 requests/month
+
+1. Sign up at https://account.mapbox.com/
+2. Go to **Tokens** in the dashboard
+3. Use the default public token, or click **Create a token**
+4. Copy the token (starts with `pk.`) into `MAPBOX_ACCESS_TOKEN`
+
+#### HERE
+Free tier: 30,000 requests/month
+
+1. Sign up at https://platform.here.com/portal/
+2. Create a new project
+3. Go to **Access manager → API keys → Generate API key**
+4. Copy the key into `HERE_API_KEY`
+
+#### Google Places
+Free tier: $200 credit/month (covers ~11,700 sessions)
+
+1. Go to https://console.cloud.google.com/ and create a project
+2. Navigate to **APIs & Services → Library**
+3. Search for **Places API** and click **Enable**
+4. Go to **APIs & Services → Credentials → Create credentials → API key**
+5. Copy the key into `GOOGLE_API_KEY`
+
+> Google requires a billing account to use the Places API, but you won't be charged unless you exceed the $200 monthly free credit.
 
 ---
 
