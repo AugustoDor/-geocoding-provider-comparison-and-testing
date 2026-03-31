@@ -28,6 +28,9 @@ GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY", "")
 
 REQUEST_DELAY_SECONDS = 0.3  # polite delay between requests
 
+# Set to True via --raw flag to print the raw JSON response from each provider
+SHOW_RAW = False
+
 # Pricing reference (verify at each provider's pricing page — may change)
 # Mapbox Search Box:  $3.00  per 1,000 sessions  → $0.003 /session
 # HERE Geocoding:     $0.49  per 1,000 requests  → $0.00049/request (after free tier)
@@ -110,6 +113,11 @@ def _print_error(message: str) -> None:
     print(Fore.RED + f"  [ERROR] {message}")
 
 
+def _print_raw(data: dict) -> None:
+    print(Fore.WHITE + Style.DIM + "  RAW RESPONSE:")
+    print(Fore.WHITE + Style.DIM + json.dumps(data, indent=2, ensure_ascii=False))
+
+
 def _incremental_queries(text: str, min_chars: int = 1) -> list[str]:
     """Returns ['B', 'Bu', 'Bue', ...] for a given text."""
     return [text[:i] for i in range(min_chars, len(text) + 1)]
@@ -140,6 +148,9 @@ def _mapbox_suggest(query: str, session_token: str) -> tuple[list[Suggestion], f
     response.raise_for_status()
 
     data = response.json()
+    if SHOW_RAW:
+        _print_raw(data)
+
     suggestions = []
     for feature in data.get("suggestions", []):
         name = feature.get("name", "")
@@ -258,6 +269,9 @@ def _here_autosuggest(query: str) -> tuple[list[Suggestion], float]:
     response.raise_for_status()
 
     data = response.json()
+    if SHOW_RAW:
+        _print_raw(data)
+
     suggestions = []
     for item in data.get("items", []):
         title = item.get("title", "")
@@ -368,6 +382,9 @@ def _google_autocomplete(query: str, session_token: str) -> tuple[list[Suggestio
     response.raise_for_status()
 
     data = response.json()
+    if SHOW_RAW:
+        _print_raw(data)
+
     if data.get("status") not in ("OK", "ZERO_RESULTS"):
         raise requests.RequestException(f"Google API error: {data.get('status')} — {data.get('error_message', '')}")
 
@@ -475,10 +492,17 @@ PROVIDER_MAP = {
 }
 
 TEST_QUERIES = {
-    "Buenos Aires":      "Major city — should appear immediately",
-    "Cafe Tortoni":      "Specific POI (historic café in BA)",
-    "Palermo":           "Neighbourhood — common name in many cities",
-    "Aeropuerto Ezeiza": "Descriptive place name",
+    "Buenos Aires": "Major city — should appear immediately",
+    "Córdoba":      "City with accent — tests unicode handling",
+    "Mendoza":      "City that is also a province — tests disambiguation",
+}
+
+# Sent as a single complete query (not incrementally) to test fuzzy matching and order tolerance.
+EDGE_CASE_QUERIES = {
+    "Buemos Aires":       "Typo — transposed letters in city name",
+    "Bunos Aries":        "Typo — multiple errors",
+    "Argentina Buenos Aires": "Inverted order — country before city",
+    "Buenos Aires Argentina": "Natural language order — city then country",
 }
 
 
@@ -552,6 +576,16 @@ def build_parser() -> argparse.ArgumentParser:
         help="Run all predefined test queries instead of a single one",
     )
     parser.add_argument(
+        "--edge-cases",
+        action="store_true",
+        help="Run edge case queries: typos and inverted city/country order",
+    )
+    parser.add_argument(
+        "--raw",
+        action="store_true",
+        help="Print the raw JSON response from the provider on each request",
+    )
+    parser.add_argument(
         "--output",
         metavar="FILE",
         help="Save results as JSON to this file path",
@@ -560,17 +594,23 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    global SHOW_RAW
     args = build_parser().parse_args()
+    SHOW_RAW = args.raw
 
-    queries_to_run: dict[str, str]
+    incremental_queries: dict[str, str]
+    single_queries: dict[str, str]
+
     if args.all_queries:
-        queries_to_run = TEST_QUERIES
+        incremental_queries = TEST_QUERIES
     else:
-        queries_to_run = {args.query: ""}
+        incremental_queries = {args.query: ""}
+
+    single_queries = EDGE_CASE_QUERIES if args.edge_cases else {}
 
     all_stats: dict[str, ProviderStats] = {}
 
-    for text, description in queries_to_run.items():
+    for text, description in incremental_queries.items():
         if description:
             print(f"\n{Fore.WHITE + Style.BRIGHT}Query: \"{text}\"  —  {description}")
 
@@ -579,7 +619,23 @@ def main() -> None:
         else:
             stats = {args.provider: run_provider(args.provider, text)}
 
-        # Merge stats across queries for a combined summary
+        for provider, s in stats.items():
+            if provider not in all_stats:
+                all_stats[provider] = s
+            else:
+                all_stats[provider].requests_made += s.requests_made
+                all_stats[provider].total_time_ms += s.total_time_ms
+                all_stats[provider].errors += s.errors
+                all_stats[provider].results.extend(s.results)
+
+    for text, description in single_queries.items():
+        print(f"\n{Fore.WHITE + Style.BRIGHT}Edge case: \"{text}\"  —  {description}")
+        providers = list(PROVIDER_MAP.keys()) if args.provider == "all" else [args.provider]
+        stats = {}
+        for provider in providers:
+            # Single full query — not broken into incremental keystrokes
+            stats[provider] = PROVIDER_MAP[provider]([text])
+
         for provider, s in stats.items():
             if provider not in all_stats:
                 all_stats[provider] = s
