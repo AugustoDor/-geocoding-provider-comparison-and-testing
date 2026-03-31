@@ -50,6 +50,10 @@ class Suggestion:
     name: str
     address: str
     place_id: str  # provider-specific ID needed for the retrieve/details call
+    country_code: str = ""       # ISO 3166-1 alpha-2 (e.g. "AR")
+    country_code_a3: str = ""    # ISO 3166-1 alpha-3 (e.g. "ARG")
+    region_code: str = ""        # ISO 3166-2 subdivision part (e.g. "C")
+    region_code_full: str = ""   # ISO 3166-2 full (e.g. "AR-C")
 
 
 @dataclass
@@ -58,6 +62,10 @@ class PlaceDetails:
     full_address: str
     lat: float
     lng: float
+    country_code: str = ""       # ISO 3166-1 alpha-2
+    country_code_a3: str = ""    # ISO 3166-1 alpha-3
+    region_code: str = ""        # ISO 3166-2 subdivision part
+    region_code_full: str = ""   # ISO 3166-2 full
 
 
 @dataclass
@@ -90,14 +98,26 @@ def _print_request(number: int, query: str, suggestions: list[Suggestion], elaps
     print(Fore.GREEN + "├─ Suggestions:")
     for i, s in enumerate(suggestions[:3], 1):
         connector = "│  └─" if i == len(suggestions[:3]) else "│  ├─"
-        print(f"{Fore.GREEN}{connector} {i}. {Style.RESET_ALL}{s.name}{Fore.WHITE} — {s.address}")
+        iso = ""
+        if s.country_code or s.region_code_full or s.region_code:
+            codes = [c for c in [s.region_code_full or s.region_code, s.country_code] if c]
+            if s.country_code_a3:
+                codes.append(s.country_code_a3)
+            iso = f"  {Fore.CYAN}[{', '.join(codes)}]"
+        print(f"{Fore.GREEN}{connector} {i}. {Style.RESET_ALL}{s.name}{Fore.WHITE} — {s.address}{iso}")
     print(f"{Fore.GREEN}└─ Response time: {Style.RESET_ALL}{elapsed}ms")
 
 
 def _print_selection(details: PlaceDetails, elapsed: float) -> None:
     print(f"\n{Fore.MAGENTA}SELECTED: {details.name}")
-    print(f"{Fore.MAGENTA}├─ Coordinates: {Style.RESET_ALL}{details.lat}, {details.lng}")
+    print(f"{Fore.MAGENTA}├─ Coordinates:  {Style.RESET_ALL}{details.lat}, {details.lng}")
     print(f"{Fore.MAGENTA}├─ Full address: {Style.RESET_ALL}{details.full_address}")
+    cc = details.country_code or "—"
+    if details.country_code_a3:
+        cc += f" / {details.country_code_a3}"
+    rc = details.region_code_full or details.region_code or "—"
+    print(f"{Fore.MAGENTA}├─ ISO 3166-1:   {Style.RESET_ALL}{cc}")
+    print(f"{Fore.MAGENTA}├─ ISO 3166-2:   {Style.RESET_ALL}{rc}")
     print(f"{Fore.MAGENTA}└─ Response time: {Style.RESET_ALL}{elapsed}ms")
 
 
@@ -116,6 +136,15 @@ def _print_error(message: str) -> None:
 def _print_raw(data: dict) -> None:
     print(Fore.WHITE + Style.DIM + "  RAW RESPONSE:")
     print(Fore.WHITE + Style.DIM + json.dumps(data, indent=2, ensure_ascii=False))
+
+
+def _suggestion_to_dict(s: Suggestion) -> dict:
+    d = {"name": s.name, "address": s.address, "country_code": s.country_code, "region_code": s.region_code}
+    if s.country_code_a3:
+        d["country_code_a3"] = s.country_code_a3
+    if s.region_code_full:
+        d["region_code_full"] = s.region_code_full
+    return d
 
 
 def _incremental_queries(text: str, min_chars: int = 1) -> list[str]:
@@ -160,7 +189,16 @@ def _mapbox_suggest(query: str, session_token: str) -> tuple[list[Suggestion], f
         ]
         address = next((a for a in address_parts if a), "")
         place_id = feature.get("mapbox_id", "")
-        suggestions.append(Suggestion(name=name, address=address, place_id=place_id))
+        context = feature.get("context", {})
+        country_obj = context.get("country", {})
+        region_obj = context.get("region", {})
+        suggestions.append(Suggestion(
+            name=name, address=address, place_id=place_id,
+            country_code=country_obj.get("country_code", ""),
+            country_code_a3=country_obj.get("country_code_alpha_3", ""),
+            region_code=region_obj.get("region_code", ""),
+            region_code_full=region_obj.get("region_code_full", ""),
+        ))
 
     return suggestions, elapsed
 
@@ -181,12 +219,19 @@ def _mapbox_retrieve(mapbox_id: str, session_token: str) -> tuple[PlaceDetails, 
     feature = data["features"][0]
     props = feature["properties"]
     coords = feature["geometry"]["coordinates"]  # [lng, lat]
+    context = props.get("context", {})
+    country_obj = context.get("country", {})
+    region_obj = context.get("region", {})
 
     return PlaceDetails(
         name=props.get("name", ""),
         full_address=props.get("full_address", props.get("place_formatted", "")),
         lat=coords[1],
         lng=coords[0],
+        country_code=country_obj.get("country_code", ""),
+        country_code_a3=country_obj.get("country_code_alpha_3", ""),
+        region_code=region_obj.get("region_code", ""),
+        region_code_full=region_obj.get("region_code_full", ""),
     ), elapsed
 
 
@@ -216,7 +261,7 @@ def test_mapbox(queries: list[str]) -> ProviderStats:
             stats.results.append({
                 "request": i,
                 "query": query,
-                "suggestions": [{"name": s.name, "address": s.address} for s in suggestions[:3]],
+                "suggestions": [_suggestion_to_dict(s) for s in suggestions[:3]],
                 "elapsed_ms": elapsed,
             })
         except requests.RequestException as e:
@@ -275,9 +320,14 @@ def _here_autosuggest(query: str) -> tuple[list[Suggestion], float]:
     suggestions = []
     for item in data.get("items", []):
         title = item.get("title", "")
-        address = item.get("address", {}).get("label", "")
+        addr = item.get("address", {})
+        address = addr.get("label", "")
         place_id = item.get("id", "")
-        suggestions.append(Suggestion(name=title, address=address, place_id=place_id))
+        country_code = addr.get("countryCode", "")
+        suggestions.append(Suggestion(
+            name=title, address=address, place_id=place_id,
+            country_code=country_code,
+        ))
 
     return suggestions, elapsed
 
@@ -297,14 +347,17 @@ def _here_lookup(place_id: str) -> tuple[PlaceDetails, float]:
 
     data = response.json()
     position = data.get("position", {})
-    address_label = data.get("address", {}).get("label", "")
+    addr = data.get("address", {})
+    address_label = addr.get("label", "")
     title = data.get("title", "")
+    country_code = addr.get("countryCode", "")
 
     return PlaceDetails(
         name=title,
         full_address=address_label,
         lat=position.get("lat", 0.0),
         lng=position.get("lng", 0.0),
+        country_code=country_code,
     ), elapsed
 
 
@@ -331,7 +384,7 @@ def test_here(queries: list[str]) -> ProviderStats:
             stats.results.append({
                 "request": i,
                 "query": query,
-                "suggestions": [{"name": s.name, "address": s.address} for s in suggestions[:3]],
+                "suggestions": [_suggestion_to_dict(s) for s in suggestions[:3]],
                 "elapsed_ms": elapsed,
             })
         except requests.RequestException as e:
@@ -403,7 +456,7 @@ def _google_place_details(place_id: str, session_token: str) -> tuple[PlaceDetai
     url = "https://maps.googleapis.com/maps/api/place/details/json"
     params = {
         "place_id": place_id,
-        "fields": "name,geometry,formatted_address",
+        "fields": "name,geometry,formatted_address,address_components",
         "sessiontoken": session_token,
         "language": "es",
         "key": GOOGLE_API_KEY,
@@ -420,11 +473,22 @@ def _google_place_details(place_id: str, session_token: str) -> tuple[PlaceDetai
     result = data["result"]
     location = result.get("geometry", {}).get("location", {})
 
+    country_code = ""
+    region_code = ""
+    for comp in result.get("address_components", []):
+        types = comp.get("types", [])
+        if "country" in types:
+            country_code = comp.get("short_name", "")
+        if "administrative_area_level_1" in types:
+            region_code = comp.get("short_name", "")
+
     return PlaceDetails(
         name=result.get("name", ""),
         full_address=result.get("formatted_address", ""),
         lat=location.get("lat", 0.0),
         lng=location.get("lng", 0.0),
+        country_code=country_code,
+        region_code=region_code,
     ), elapsed
 
 
@@ -455,7 +519,7 @@ def test_google(queries: list[str]) -> ProviderStats:
             stats.results.append({
                 "request": i,
                 "query": query,
-                "suggestions": [{"name": s.name, "address": s.address} for s in suggestions[:3]],
+                "suggestions": [_suggestion_to_dict(s) for s in suggestions[:3]],
                 "elapsed_ms": elapsed,
             })
         except requests.RequestException as e:
