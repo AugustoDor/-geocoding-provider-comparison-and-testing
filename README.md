@@ -18,16 +18,31 @@ Script that tests and compares three location autocomplete providers by simulati
 
 ## Setup
 
-**1. Install dependencies**
+**1. Create and activate a virtual environment**
+```bash
+python -m venv venv
+
+# macOS / Linux / Git Bash (Windows)
+source venv/bin/activate
+
+# PowerShell (Windows)
+venv\Scripts\Activate.ps1
+# If you get an execution policy error, run first:
+# Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+**2. Install dependencies**
 ```bash
 pip install -r requirements.txt
 ```
 
-**2. Configure API keys**
+**3. Configure API keys**
 ```bash
 cp .env.example .env
 # edit .env and fill in your keys
 ```
+
+> The venv must be active every time you run the script. You'll see `(venv)` at the start of your terminal prompt when it's active. To deactivate: `deactivate`.
 
 ### Getting API keys
 
@@ -65,12 +80,30 @@ python test_geocoding.py --provider google --query "Palermo"
 ```bash
 python test_geocoding.py --all-queries
 ```
-Predefined queries: `Buenos Aires`, `Cafe Tortoni`, `Palermo`, `Aeropuerto Ezeiza`
+Predefined queries: `Buenos Aires`, `Córdoba`, `Mendoza`
+
+**Test fuzzy matching and order tolerance (edge cases)**
+```bash
+python test_geocoding.py --edge-cases
+python test_geocoding.py --provider mapbox --edge-cases
+```
+Edge cases are sent as a single complete query (not typed incrementally):
+- `"Buemos Aires"` — typo, transposed letters
+- `"Bunos Aries"` — multiple errors
+- `"Argentina Buenos Aires"` — inverted order, country first
+- `"Buenos Aires Argentina"` — natural language order
+
+**Print the raw JSON response from the provider**
+```bash
+python test_geocoding.py --raw
+python test_geocoding.py --provider mapbox --query "Mendoza" --raw
+```
+Useful to inspect the exact fields each provider returns before deciding which ones to use in your app.
 
 **Save results to JSON**
 ```bash
 python test_geocoding.py --output results.json
-python test_geocoding.py --all-queries --output results_all.json
+python test_geocoding.py --edge-cases --output results_edge.json
 ```
 
 ---
